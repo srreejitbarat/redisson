@@ -1,7 +1,6 @@
 package org.redisson.spring.starter;
 
 import org.junit.jupiter.api.Test;
-import org.mockito.MockMakers;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.redisson.config.SentinelServersConfig;
@@ -13,9 +12,6 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.withSettings;
 
 class RedissonAutoConfigurationV4SentinelTest {
 
@@ -80,19 +76,47 @@ class RedissonAutoConfigurationV4SentinelTest {
 
     @Test
     void connectionDetailsTakePrecedenceOverSentinelProperties() {
-        DataRedisConnectionDetails details = mock(DataRedisConnectionDetails.class,
-                withSettings().mockMaker(MockMakers.PROXY));
-        DataRedisConnectionDetails.Sentinel sentinelDetails = mock(DataRedisConnectionDetails.Sentinel.class,
-                withSettings().mockMaker(MockMakers.PROXY));
-        when(details.getUsername()).thenReturn("details-redis-user");
-        when(details.getPassword()).thenReturn("details-redis-password");
-        when(details.getSentinel()).thenReturn(sentinelDetails);
-        when(sentinelDetails.getMaster()).thenReturn("details-master");
-        when(sentinelDetails.getNodes()).thenReturn(Arrays.asList(
-                new DataRedisConnectionDetails.Node("sentinel.example", 26381)));
-        when(sentinelDetails.getDatabase()).thenReturn(5);
-        when(sentinelDetails.getUsername()).thenReturn("details-sentinel-user");
-        when(sentinelDetails.getPassword()).thenReturn("details-sentinel-password");
+        DataRedisConnectionDetails details = new DataRedisConnectionDetails() {
+            @Override
+            public String getUsername() {
+                return "details-redis-user";
+            }
+
+            @Override
+            public String getPassword() {
+                return "details-redis-password";
+            }
+
+            @Override
+            public Sentinel getSentinel() {
+                return new Sentinel() {
+                    @Override
+                    public int getDatabase() {
+                        return 5;
+                    }
+
+                    @Override
+                    public String getMaster() {
+                        return "details-master";
+                    }
+
+                    @Override
+                    public java.util.List<Node> getNodes() {
+                        return Arrays.asList(new Node("sentinel.example", 26381));
+                    }
+
+                    @Override
+                    public String getUsername() {
+                        return "details-sentinel-user";
+                    }
+
+                    @Override
+                    public String getPassword() {
+                        return "details-sentinel-password";
+                    }
+                };
+            }
+        };
 
         contextRunner.withBean(DataRedisConnectionDetails.class, () -> details)
                 .withPropertyValues(
