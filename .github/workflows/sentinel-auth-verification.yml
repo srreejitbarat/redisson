@@ -1,0 +1,120 @@
+name: Sentinel authentication verification
+on:
+  push:
+    branches: [validation/sentinel-auth-20261016]
+permissions:
+  contents: read
+env:
+  MAVEN_VERSION: 3.9.16
+jobs:
+  regression:
+    name: Before and after regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 067cbbddb72708e22791feb4629a1feca364535d
+          fetch-depth: 5
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          java-version: 25
+          distribution: temurin
+          cache: maven
+      - name: Install upstream Maven version
+        run: |
+          curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o "$RUNNER_TEMP/maven.tar.gz"
+          curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz.sha512" -o "$RUNNER_TEMP/maven.sha512"
+          python3 - <<'PYTHON'
+          import hashlib, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP'])
+          assert hashlib.sha512((p / 'maven.tar.gz').read_bytes()).hexdigest() == (p / 'maven.sha512').read_text().split()[0]
+          PYTHON
+          tar xzf "$RUNNER_TEMP/maven.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-${MAVEN_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Prove regression on unchanged upstream implementation
+        run: |
+          source=redisson-spring/redisson-spring-boot-starter/src/main/java/org/redisson/spring/starter/RedissonAutoConfigurationV4.java
+          git show 5ea530bf8c4b0cbc9128882608059b18f2baf5a8:"$source" > "$source"
+          set +e
+          mvn -B -ntp -pl redisson-spring/redisson-spring-boot-starter -am -Dmaven.test.skip=false -Dtest=RedissonAutoConfigurationV4SentinelTest -Dsurefire.failIfNoSpecifiedTests=false clean test > before-build.log 2>&1
+          result=$?
+          set -e
+          test "$result" -ne 0
+          mkdir -p verification/before
+          cp redisson-spring/redisson-spring-boot-starter/target/surefire-reports/*RedissonAutoConfigurationV4SentinelTest* verification/before/
+          python3 - <<'PYTHON'
+          import pathlib, xml.etree.ElementTree as ET
+          p = next(pathlib.Path('verification/before').glob('TEST-*.xml'))
+          r = ET.parse(p).getroot()
+          assert [int(r.get(k, 0)) for k in ('tests', 'failures', 'errors', 'skipped')] == [4, 2, 0, 0], r.attrib
+          failures = {t.get('name') for t in r.findall('testcase') if t.find('failure') is not None}
+          assert failures == {'usesSentinelAuthenticationPropertiesWithoutConnectionDetails', 'supportsPasswordOnlySentinelAuthentication'}, failures
+          print('Confirmed: upstream has exactly the two expected authentication failures; controls pass.')
+          PYTHON
+          git restore "$source"
+      - name: Verify patched eight-module reactor
+        run: |
+          mvn -B -ntp -pl redisson-spring/redisson-spring-boot-starter -am -Dmaven.test.skip=false -Dtest=RedissonAutoConfigurationV4SentinelTest -Dsurefire.failIfNoSpecifiedTests=false clean verify > after-build.log 2>&1
+          mkdir -p verification/after
+          cp redisson-spring/redisson-spring-boot-starter/target/surefire-reports/*RedissonAutoConfigurationV4SentinelTest* verification/after/
+          python3 - <<'PYTHON'
+          import os, pathlib, xml.etree.ElementTree as ET
+          p = next(pathlib.Path('verification/after').glob('TEST-*.xml'))
+          r = ET.parse(p).getroot()
+          assert [int(r.get(k, 0)) for k in ('tests', 'failures', 'errors', 'skipped')] == [4, 0, 0, 0], r.attrib
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('### Sentinel authentication regression\n\n')
+              f.write('Exact contribution head: `067cbbddb72708e22791feb4629a1feca364535d`\n\n')
+              f.write('| Implementation | Tests | Passed | Failures | Errors | Skipped |\n|---|---:|---:|---:|---:|---:|\n')
+              f.write('| Unchanged upstream | 4 | 2 | 2 expected | 0 | 0 |\n| Patched | 4 | 4 | 0 | 0 | 0 |\n\n')
+              f.write('Eight-module Maven verify completed. This is focused regression coverage; Docker integration tests are not run.\n')
+          PYTHON
+      - name: Upload build logs and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-auth-before-after
+          path: |
+            *-build.log
+            verification/
+          retention-days: 14
+  upstream-build:
+    name: Full upstream compilation and checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 067cbbddb72708e22791feb4629a1feca364535d
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          java-version: 25
+          distribution: temurin
+          cache: maven
+      - name: Install upstream Maven version
+        run: |
+          curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o "$RUNNER_TEMP/maven.tar.gz"
+          curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz.sha512" -o "$RUNNER_TEMP/maven.sha512"
+          python3 - <<'PYTHON'
+          import hashlib, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP'])
+          assert hashlib.sha512((p / 'maven.tar.gz').read_bytes()).hexdigest() == (p / 'maven.sha512').read_text().split()[0]
+          PYTHON
+          tar xzf "$RUNNER_TEMP/maven.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-${MAVEN_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Run unchanged upstream CI command
+        run: |
+          mvn -v
+          mvn -T 1C -B clean verify -DskipTests -Dmaven.test.skip=false --file pom.xml > full-upstream-build.log 2>&1
+          echo '### Full upstream compilation and checks passed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Ran the unchanged upstream CI command. Test sources were compiled; tests were skipped exactly as in upstream CI.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload full build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-upstream-build-log
+          path: full-upstream-build.log
+          retention-days: 14
