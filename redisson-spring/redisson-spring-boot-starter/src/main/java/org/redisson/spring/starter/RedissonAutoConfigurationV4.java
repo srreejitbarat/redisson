@@ -175,6 +175,8 @@ public class RedissonAutoConfigurationV4 {
             if (sentinel != null) {
                 nodes = convert(prefix, sentinel.getNodes());
                 sentinelMaster = sentinel.getMaster();
+                sentinelUsername = sentinel.getUsername();
+                sentinelPassword = sentinel.getPassword();
             } else {
                 nodes = EMPTY;
                 sentinelMaster = null;
